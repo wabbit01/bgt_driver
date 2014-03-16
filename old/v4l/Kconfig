@@ -1,0 +1,21 @@
+mainmenu "V4L/DVB menu"
+source Kconfig.kern
+config VIDEO_KERNEL_VERSION
+	bool "Enable drivers not supported by this kernel"
+	default n
+	---help---
+	  Normally drivers that require a kernel newer 3.12.6,
+	  the kernel you are compiling for now, will be disabled.
+
+	  Turning this switch on will let you enabled them, but be warned
+	  they may not work properly or even compile.
+
+	  They may also work fine, and the only reason they are listed as
+	  requiring a newer kernel is that no one has tested them with an
+	  older one yet.
+
+	  If the driver works, please post a report to the V4L mailing list:
+			 linux-media@vger.kernel.org.
+
+	  Unless you know what you are doing, you should answer N.
+

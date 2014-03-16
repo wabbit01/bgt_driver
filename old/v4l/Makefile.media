@@ -1,0 +1,36 @@
+# Including linux/drivers/media/Makefile
+media-install::
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/video:"
+	@files='mt20xx.ko tuner-xc2028.ko video-buf-dvb.ko tea5761.ko compat-ioctl32.ko tuner-types.ko video-buf.ko tda9887.ko tda8290.ko tuner-simple.ko tea5767.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/video/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/video/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/video/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/video/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/dvb/cinergyT2:"
+	@files='cinergyT2.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/common:"
+	@files='ir-common.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/common/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/common/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/common/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/common/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/dvb/frontends:"
+	@files='mt2131.ko tda827x.ko tda18271.ko mt2266.ko xc5000.ko qt1010.ko mt2060.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/frontends/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/dvb/frontends/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/frontends/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/dvb/frontends/$$i.gz; fi; done; echo;
+
+	@if [ -d /lib/modules/$(KERNELRELEASE)/ubuntu/media ]; then printf "\nHmm... distro kernel with a non-standard place for module backports detected.\nPlease always prefer to use vanilla upstream kernel with V4L/DVB\nI'll try to remove old/obsolete LUM files from /lib/modules/$(KERNELRELEASE)/ubuntu/media:\n"; files=' mt20xx.ko tuner-xc2028.ko video-buf-dvb.ko tea5761.ko compat-ioctl32.ko tuner-types.ko video-buf.ko tda9887.ko tda8290.ko tuner-simple.ko tea5767.ko cinergyT2.ko ir-common.ko mt2131.ko tda827x.ko tda18271.ko mt2266.ko xc5000.ko qt1010.ko mt2060.ko'; for i in $$files;do find "/lib/modules/$(KERNELRELEASE)/ubuntu/media" -name "$$i" -exec echo '{}' ';' ; find "/lib/modules/$(KERNELRELEASE)/ubuntu/media" -name "$$i" -exec rm '{}' ';' ; done; fi
+	@echo "Installing kernel modules under $(DESTDIR)$(KDIR26)/:"
+	
+	/sbin/depmod -a $(KERNELRELEASE) $(if $(DESTDIR),-b $(DESTDIR))
+
+media-rminstall::
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/video:"
+	@files='mt20xx.ko tuner-xc2028.ko video-buf-dvb.ko tea5761.ko compat-ioctl32.ko tuner-types.ko video-buf.ko tda9887.ko tda8290.ko tuner-simple.ko tea5767.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/video/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/video/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/video/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/video/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/dvb/cinergyT2:"
+	@files='cinergyT2.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/dvb/cinergyT2/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/common:"
+	@files='ir-common.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/common/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/common/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/common/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/common/$$i.gz; fi; done; echo;
+
+	@echo -e "\nRemoving obsolete files from $(KDIR26)/dvb/frontends:"
+	@files='mt2131.ko tda827x.ko tda18271.ko mt2266.ko xc5000.ko qt1010.ko mt2060.ko'; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/frontends/$$i ]; then echo -n "$$i "; rm $(DESTDIR)$(KDIR26)/dvb/frontends/$$i; fi; done; for i in $$files;do if [ -e $(DESTDIR)$(KDIR26)/dvb/frontends/$$i.gz ]; then echo -n "$$i.gz "; rm $(DESTDIR)$(KDIR26)/dvb/frontends/$$i.gz; fi; done; echo;
+
+	@if [ -d /lib/modules/$(KERNELRELEASE)/ubuntu/media ]; then printf "\nHmm... distro kernel with a non-standard place for module backports detected.\nPlease always prefer to use vanilla upstream kernel with V4L/DVB\nI'll try to remove old/obsolete LUM files from /lib/modules/$(KERNELRELEASE)/ubuntu/media:\n"; files=' mt20xx.ko tuner-xc2028.ko video-buf-dvb.ko tea5761.ko compat-ioctl32.ko tuner-types.ko video-buf.ko tda9887.ko tda8290.ko tuner-simple.ko tea5767.ko cinergyT2.ko ir-common.ko mt2131.ko tda827x.ko tda18271.ko mt2266.ko xc5000.ko qt1010.ko mt2060.ko'; for i in $$files;do find "/lib/modules/$(KERNELRELEASE)/ubuntu/media" -name "$$i" -exec echo '{}' ';' ; find "/lib/modules/$(KERNELRELEASE)/ubuntu/media" -name "$$i" -exec rm '{}' ';' ; done; fi
+Makefile.media: ../linux/drivers/media/Makefile \
+	obsolete.txt \
+
