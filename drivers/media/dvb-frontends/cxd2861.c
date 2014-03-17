@@ -705,7 +705,8 @@ out:
 	return ret;
 }
 
-static int cxd2861_set_params(struct dvb_frontend *fe)
+static int cxd2861_set_params(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p)
 {
 	struct cxd2861_dev *cxd2861 = fe->tuner_priv;
 	struct dtv_frontend_properties *props	= &fe->dtv_property_cache;
@@ -868,7 +869,7 @@ static struct dvb_tuner_ops cxd2861_ops = {
 	.init			= cxd2861_init,
 	.sleep			= cxd2861_sleep,
 	.set_params		= cxd2861_set_params,
-	.get_if_frequency	= cxd2861_get_ifreq,
+	.get_frequency		= cxd2861_get_ifreq,
 	.release		= cxd2861_release
 };
 

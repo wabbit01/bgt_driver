@@ -28,12 +28,12 @@ struct a8290_config {
 };
 
 
-//#if defined(CONFIG_DVB_A8290) || (defined(CONFIG_DVB_A8290_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_DVB_A8290)
 
 extern struct dvb_frontend *a8290_attach(struct dvb_frontend *fe,
 					 const struct a8290_config *config,
 					 struct i2c_adapter *i2c);
-/*#else
+#else
 
 static inline struct dvb_frontend *a8290_attach(struct dvb_frontend *fe,
 						const struct a8290_config *config,
@@ -42,6 +42,6 @@ static inline struct dvb_frontend *a8290_attach(struct dvb_frontend *fe,
 	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
 }
-#endif *//* CONFIG_DVB_A8290 */
+#endif /* CONFIG_DVB_A8290 */
 
 #endif /* __A8290_H */

@@ -21,12 +21,13 @@
 
 #include "cxd2820r_priv.h"
 
-int cxd2820r_set_frontend_t2(struct dvb_frontend *fe)
+int cxd2820r_set_frontend_t2(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *params)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
-	int ret, i, bw_i;
-	u32 if_freq, if_ctl;
+	int ret, i;
+	u32 if_khz, if_ctl;
 	u64 num;
 	u8 buf[3], bw_param;
 	u8 bw_params1[][5] = {
@@ -68,33 +69,16 @@ int cxd2820r_set_frontend_t2(struct dvb_frontend *fe)
 		{ 0x027ef, 0x10, 0x18 },
 	};
 
-	dev_dbg(&priv->i2c->dev, "%s: frequency=%d bandwidth_hz=%d\n", __func__,
-			c->frequency, c->bandwidth_hz);
+	dbg("%s: RF=%d BW=%d", __func__, c->frequency, c->bandwidth_hz);
 
-	switch (c->bandwidth_hz) {
-	case 5000000:
-		bw_i = 0;
-		bw_param = 3;
-		break;
-	case 6000000:
-		bw_i = 1;
-		bw_param = 2;
-		break;
-	case 7000000:
-		bw_i = 2;
-		bw_param = 1;
-		break;
-	case 8000000:
-		bw_i = 3;
-		bw_param = 0;
-		break;
-	default:
-		return -EINVAL;
-	}
+	/* update GPIOs */
+	ret = cxd2820r_gpio(fe);
+	if (ret)
+		goto error;
 
 	/* program tuner */
 	if (fe->ops.tuner_ops.set_params)
-		fe->ops.tuner_ops.set_params(fe);
+		fe->ops.tuner_ops.set_params(fe, params);
 
 	if (priv->delivery_system != SYS_DVBT2) {
 		for (i = 0; i < ARRAY_SIZE(tab); i++) {
@@ -107,33 +91,40 @@ int cxd2820r_set_frontend_t2(struct dvb_frontend *fe)
 
 	priv->delivery_system = SYS_DVBT2;
 
-	/* program IF frequency */
-	if (fe->ops.tuner_ops.get_if_frequency) {
-		ret = fe->ops.tuner_ops.get_if_frequency(fe, &if_freq);
-		if (ret)
-			goto error;
-	} else
-		if_freq = 0;
-
-	dev_dbg(&priv->i2c->dev, "%s: if_freq=%d\n", __func__, if_freq);
-
-	num = if_freq / 1000; /* Hz => kHz */
-	num *= 0x1000000;
-	if_ctl = cxd2820r_div_u64_round_closest(num, 41000);
-	buf[0] = ((if_ctl >> 16) & 0xff);
-	buf[1] = ((if_ctl >>  8) & 0xff);
-	buf[2] = ((if_ctl >>  0) & 0xff);
+	switch (c->bandwidth_hz) {
+	case 5000000:
+		if_khz = priv->cfg.if_dvbt2_5;
+		i = 0;
+		bw_param = 3;
+		break;
+	case 6000000:
+		if_khz = priv->cfg.if_dvbt2_6;
+		i = 1;
+		bw_param = 2;
+		break;
+	case 7000000:
+		if_khz = priv->cfg.if_dvbt2_7;
+		i = 2;
+		bw_param = 1;
+		break;
+	case 8000000:
+		if_khz = priv->cfg.if_dvbt2_8;
+		i = 3;
+		bw_param = 0;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	/* PLP filtering */
-	if (c->stream_id > 255) {
-		dev_dbg(&priv->i2c->dev, "%s: Disable PLP filtering\n", __func__);
+	if (c->dvbt2_plp_id < 0 || c->dvbt2_plp_id > 255) {
+		dbg("%s: Disable PLP filtering\n", __func__);
 		ret = cxd2820r_wr_reg(priv, 0x023ad , 0);
 		if (ret)
 			goto error;
 	} else {
-		dev_dbg(&priv->i2c->dev, "%s: Enable PLP filtering = %d\n", __func__,
-				c->stream_id);
-		ret = cxd2820r_wr_reg(priv, 0x023af , c->stream_id & 0xFF);
+		dbg("%s: Enable PLP filtering = %d\n", __func__, c->dvbt2_plp_id);
+		ret = cxd2820r_wr_reg(priv, 0x023af , c->dvbt2_plp_id & 0xFF);
 		if (ret)
 			goto error;
 		ret = cxd2820r_wr_reg(priv, 0x023ad , 1);
@@ -141,11 +132,18 @@ int cxd2820r_set_frontend_t2(struct dvb_frontend *fe)
 			goto error;
 	}
 
+	num = if_khz;
+	num *= 0x1000000;
+	if_ctl = cxd2820r_div_u64_round_closest(num, 41000);
+	buf[0] = ((if_ctl >> 16) & 0xff);
+	buf[1] = ((if_ctl >>  8) & 0xff);
+	buf[2] = ((if_ctl >>  0) & 0xff);
+
 	ret = cxd2820r_wr_regs(priv, 0x020b6, buf, 3);
 	if (ret)
 		goto error;
 
-	ret = cxd2820r_wr_regs(priv, 0x0209f, bw_params1[bw_i], 5);
+	ret = cxd2820r_wr_regs(priv, 0x0209f, bw_params1[i], 5);
 	if (ret)
 		goto error;
 
@@ -163,12 +161,13 @@ int cxd2820r_set_frontend_t2(struct dvb_frontend *fe)
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 
 }
 
-int cxd2820r_get_frontend_t2(struct dvb_frontend *fe)
+int cxd2820r_get_frontend_t2(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
@@ -279,7 +278,7 @@ int cxd2820r_get_frontend_t2(struct dvb_frontend *fe)
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -304,11 +303,11 @@ int cxd2820r_read_status_t2(struct dvb_frontend *fe, fe_status_t *status)
 		}
 	}
 
-	dev_dbg(&priv->i2c->dev, "%s: lock=%02x\n", __func__, buf[0]);
+	dbg("%s: lock=%02x", __func__, buf[0]);
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -335,7 +334,7 @@ int cxd2820r_read_ber_t2(struct dvb_frontend *fe, u32 *ber)
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -359,7 +358,7 @@ int cxd2820r_read_signal_strength_t2(struct dvb_frontend *fe,
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -383,12 +382,11 @@ int cxd2820r_read_snr_t2(struct dvb_frontend *fe, u16 *snr)
 	else
 		*snr = 0;
 
-	dev_dbg(&priv->i2c->dev, "%s: dBx10=%d val=%04x\n", __func__, *snr,
-			tmp);
+	dbg("%s: dBx10=%d val=%04x", __func__, *snr, tmp);
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -412,7 +410,7 @@ int cxd2820r_sleep_t2(struct dvb_frontend *fe)
 		{ 0x00080, 0x00, 0xff },
 	};
 
-	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
+	dbg("%s", __func__);
 
 	for (i = 0; i < ARRAY_SIZE(tab); i++) {
 		ret = cxd2820r_wr_reg_mask(priv, tab[i].reg, tab[i].val,
@@ -425,7 +423,7 @@ int cxd2820r_sleep_t2(struct dvb_frontend *fe)
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
 }
 
@@ -438,3 +436,4 @@ int cxd2820r_get_tune_settings_t2(struct dvb_frontend *fe,
 
 	return 0;
 }
+

@@ -38,12 +38,12 @@ struct cxd2861_cfg {
 
 };
 
-//#if defined(CONFIG_DVB_CXD2861) || (defined(CONFIG_DVB_CXD2861_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_DVB_CXD2861)
 
 extern struct dvb_frontend *cxd2861_attach(struct dvb_frontend *fe,
 					   const struct cxd2861_cfg *config,
 					   struct i2c_adapter *i2c);
-/*#else
+#else
 
 static inline struct dvb_frontend *cxd2861_attach(struct dvb_frontend *fe,
 						  const struct cxd2861_cfg *config,
@@ -52,6 +52,6 @@ static inline struct dvb_frontend *cxd2861_attach(struct dvb_frontend *fe,
 	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
 }
-#endif *//* CONFIG_DVB_CXD2861 */
+#endif /* CONFIG_DVB_CXD2861 */
 
 #endif /* __CXD2861_H */

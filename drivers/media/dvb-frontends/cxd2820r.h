@@ -22,7 +22,6 @@
 #ifndef CXD2820R_H
 #define CXD2820R_H
 
-#include <linux/kconfig.h>
 #include <linux/dvb/frontend.h>
 
 #define CXD2820R_GPIO_D (0 << 0) /* disable */
@@ -63,6 +62,30 @@ struct cxd2820r_config {
 	 * Values: 0, 1
 	 */
 	bool spec_inv;
+
+	/* IFs for all used modes.
+	 * Default: none, must set
+	 * Values: <kHz>
+	 */
+	u16 if_dvbt_6;
+	u16 if_dvbt_7;
+	u16 if_dvbt_8;
+	u16 if_dvbt2_5;
+	u16 if_dvbt2_6;
+	u16 if_dvbt2_7;
+	u16 if_dvbt2_8;
+	u16 if_dvbc;
+
+	/* GPIOs for all used modes.
+	 * Default: none, disabled
+	 * Values: <see above>
+	 */
+	u8 gpio_dvbt[3];
+	u8 gpio_dvbt2[3];
+	u8 gpio_dvbc[3];
+
+	/* Hook for Lock LED */
+	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
 
@@ -70,16 +93,25 @@ struct cxd2820r_config {
 extern struct dvb_frontend *cxd2820r_attach(
 	const struct cxd2820r_config *config,
 	struct i2c_adapter *i2c,
-	int *gpio_chip_base
+	struct dvb_frontend *fe
+);
+extern struct i2c_adapter *cxd2820r_get_tuner_i2c_adapter(
+	struct dvb_frontend *fe
 );
 #else
 static inline struct dvb_frontend *cxd2820r_attach(
 	const struct cxd2820r_config *config,
 	struct i2c_adapter *i2c,
-	int *gpio_chip_base
+	struct dvb_frontend *fe
 )
 {
 	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
+	return NULL;
+}
+static inline struct i2c_adapter *cxd2820r_get_tuner_i2c_adapter(
+	struct dvb_frontend *fe
+)
+{
 	return NULL;
 }
 

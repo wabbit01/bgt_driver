@@ -27,11 +27,11 @@ struct cxd2817_config {
 	bool	serial_ts;
 };
 
-//#if defined(CONFIG_DVB_CXD2817) || (defined(CONFIG_DVB_CXD2817_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_DVB_CXD2817)
 
 extern struct dvb_frontend *cxd2817_attach(const struct cxd2817_config *config,
 					   struct i2c_adapter *i2c);
-/*#else
+#else
 
 static inline struct dvb_frontend *cxd2817_attach(const struct cxd2817_config *config,
 						  struct i2c_adapter *i2c)
@@ -39,6 +39,6 @@ static inline struct dvb_frontend *cxd2817_attach(const struct cxd2817_config *c
 	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
 }
-#endif *//* CONFIG_DVB_CXD2817 */
+#endif /* CONFIG_DVB_CXD2817 */
 
 #endif /* __CXD2817_H */

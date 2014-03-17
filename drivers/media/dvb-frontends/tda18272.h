@@ -31,13 +31,13 @@ struct tda18272_config {
 	enum tda18272_mode	mode;
 };
 
-//#if defined(CONFIG_DVB_TDA18272) || (defined(CONFIG_DVB_TDA18272_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_DVB_TDA18272)
 
 extern struct dvb_frontend *tda18272_attach(struct dvb_frontend *fe,
 					    struct i2c_adapter *i2c,
 					    const struct tda18272_config *config);
 
-/*#else
+#else
 static inline struct dvb_frontend *tda18272_attach(struct dvb_frontend *fe,
 						   struct i2c_adapter *i2c,
 						   const struct tda18272_config *config)
@@ -46,6 +46,6 @@ static inline struct dvb_frontend *tda18272_attach(struct dvb_frontend *fe,
 	return NULL;
 }
 
-#endif*/ /* CONFIG_DVB_TDA18272 */
+#endif /* CONFIG_DVB_TDA18272 */
 
 #endif /* __TDA18272_H */

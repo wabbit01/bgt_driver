@@ -26,7 +26,19 @@
 #include "dvb_frontend.h"
 #include "dvb_math.h"
 #include "cxd2820r.h"
-#include <linux/gpio.h>
+
+#define LOG_PREFIX "cxd2820r"
+
+#undef dbg
+#define dbg(f, arg...) \
+	if (cxd2820r_debug) \
+		printk(KERN_INFO   LOG_PREFIX": " f "\n" , ## arg)
+#undef err
+#define err(f, arg...)  printk(KERN_ERR     LOG_PREFIX": " f "\n" , ## arg)
+#undef info
+#define info(f, arg...) printk(KERN_INFO    LOG_PREFIX": " f "\n" , ## arg)
+#undef warn
+#define warn(f, arg...) printk(KERN_WARNING LOG_PREFIX": " f "\n" , ## arg)
 
 struct reg_val_mask {
 	u32 reg;
@@ -36,17 +48,17 @@ struct reg_val_mask {
 
 struct cxd2820r_priv {
 	struct i2c_adapter *i2c;
-	struct dvb_frontend fe;
+	struct dvb_frontend fe[2];
 	struct cxd2820r_config cfg;
+	struct i2c_adapter tuner_i2c_adapter;
+
+	struct mutex fe_lock; /* FE lock */
+	int active_fe:2; /* FE lock, -1=NONE, 0=DVB-T/T2, 1=DVB-C */
 
 	bool ber_running;
 
 	u8 bank[2];
-#define GPIO_COUNT 3
-	u8 gpio[GPIO_COUNT];
-#ifdef CONFIG_GPIOLIB
-	struct gpio_chip gpio_chip;
-#endif
+	u8 gpio[3];
 
 	fe_delivery_system_t delivery_system;
 	bool last_tune_failed; /* for switch between T and T2 tune */
@@ -56,7 +68,7 @@ struct cxd2820r_priv {
 
 extern int cxd2820r_debug;
 
-int cxd2820r_gpio(struct dvb_frontend *fe, u8 *gpio);
+int cxd2820r_gpio(struct dvb_frontend *fe);
 
 int cxd2820r_wr_reg_mask(struct cxd2820r_priv *priv, u32 reg, u8 val,
 	u8 mask);
@@ -78,9 +90,11 @@ int cxd2820r_rd_reg(struct cxd2820r_priv *priv, u32 reg, u8 *val);
 
 /* cxd2820r_c.c */
 
-int cxd2820r_get_frontend_c(struct dvb_frontend *fe);
+int cxd2820r_get_frontend_c(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p);
 
-int cxd2820r_set_frontend_c(struct dvb_frontend *fe);
+int cxd2820r_set_frontend_c(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *params);
 
 int cxd2820r_read_status_c(struct dvb_frontend *fe, fe_status_t *status);
 
@@ -101,9 +115,11 @@ int cxd2820r_get_tune_settings_c(struct dvb_frontend *fe,
 
 /* cxd2820r_t.c */
 
-int cxd2820r_get_frontend_t(struct dvb_frontend *fe);
+int cxd2820r_get_frontend_t(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p);
 
-int cxd2820r_set_frontend_t(struct dvb_frontend *fe);
+int cxd2820r_set_frontend_t(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *params);
 
 int cxd2820r_read_status_t(struct dvb_frontend *fe, fe_status_t *status);
 
@@ -124,9 +140,11 @@ int cxd2820r_get_tune_settings_t(struct dvb_frontend *fe,
 
 /* cxd2820r_t2.c */
 
-int cxd2820r_get_frontend_t2(struct dvb_frontend *fe);
+int cxd2820r_get_frontend_t2(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p);
 
-int cxd2820r_set_frontend_t2(struct dvb_frontend *fe);
+int cxd2820r_set_frontend_t2(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *params);
 
 int cxd2820r_read_status_t2(struct dvb_frontend *fe, fe_status_t *status);
 

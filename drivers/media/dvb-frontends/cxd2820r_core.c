@@ -21,30 +21,24 @@
 
 #include "cxd2820r_priv.h"
 
-/* Max transfer size done by I2C transfer functions */
-#define MAX_XFER_SIZE  64
+int cxd2820r_debug;
+module_param_named(debug, cxd2820r_debug, int, 0644);
+MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
 
 /* write multiple registers */
 static int cxd2820r_wr_regs_i2c(struct cxd2820r_priv *priv, u8 i2c, u8 reg,
 	u8 *val, int len)
 {
 	int ret;
-	u8 buf[MAX_XFER_SIZE];
+	u8 buf[len+1];
 	struct i2c_msg msg[1] = {
 		{
 			.addr = i2c,
 			.flags = 0,
-			.len = len + 1,
+			.len = sizeof(buf),
 			.buf = buf,
 		}
 	};
-
-	if (1 + len > sizeof(buf)) {
-		dev_warn(&priv->i2c->dev,
-			 "%s: i2c wr reg=%04x: len=%d is too big!\n",
-			 KBUILD_MODNAME, reg, len);
-		return -EINVAL;
-	}
 
 	buf[0] = reg;
 	memcpy(&buf[1], val, len);
@@ -53,8 +47,7 @@ static int cxd2820r_wr_regs_i2c(struct cxd2820r_priv *priv, u8 i2c, u8 reg,
 	if (ret == 1) {
 		ret = 0;
 	} else {
-		dev_warn(&priv->i2c->dev, "%s: i2c wr failed=%d reg=%02x " \
-				"len=%d\n", KBUILD_MODNAME, ret, reg, len);
+		warn("i2c wr failed ret:%d reg:%02x len:%d", ret, reg, len);
 		ret = -EREMOTEIO;
 	}
 	return ret;
@@ -65,7 +58,7 @@ static int cxd2820r_rd_regs_i2c(struct cxd2820r_priv *priv, u8 i2c, u8 reg,
 	u8 *val, int len)
 {
 	int ret;
-	u8 buf[MAX_XFER_SIZE];
+	u8 buf[len];
 	struct i2c_msg msg[2] = {
 		{
 			.addr = i2c,
@@ -75,25 +68,17 @@ static int cxd2820r_rd_regs_i2c(struct cxd2820r_priv *priv, u8 i2c, u8 reg,
 		}, {
 			.addr = i2c,
 			.flags = I2C_M_RD,
-			.len = len,
+			.len = sizeof(buf),
 			.buf = buf,
 		}
 	};
-
-	if (len > sizeof(buf)) {
-		dev_warn(&priv->i2c->dev,
-			 "%s: i2c wr reg=%04x: len=%d is too big!\n",
-			 KBUILD_MODNAME, reg, len);
-		return -EINVAL;
-	}
 
 	ret = i2c_transfer(priv->i2c, msg, 2);
 	if (ret == 2) {
 		memcpy(val, buf, len);
 		ret = 0;
 	} else {
-		dev_warn(&priv->i2c->dev, "%s: i2c rd failed=%d reg=%02x " \
-				"len=%d\n", KBUILD_MODNAME, ret, reg, len);
+		warn("i2c rd failed ret:%d reg:%02x len:%d", ret, reg, len);
 		ret = -EREMOTEIO;
 	}
 
@@ -185,14 +170,27 @@ int cxd2820r_wr_reg_mask(struct cxd2820r_priv *priv, u32 reg, u8 val,
 	return cxd2820r_wr_reg(priv, reg, val);
 }
 
-int cxd2820r_gpio(struct dvb_frontend *fe, u8 *gpio)
+int cxd2820r_gpio(struct dvb_frontend *fe)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret, i;
-	u8 tmp0, tmp1;
+	u8 *gpio, tmp0, tmp1;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	switch (fe->dtv_property_cache.delivery_system) {
+	case SYS_DVBT:
+		gpio = priv->cfg.gpio_dvbt;
+		break;
+	case SYS_DVBT2:
+		gpio = priv->cfg.gpio_dvbt2;
+		break;
+	case SYS_DVBC_ANNEX_AC:
+		gpio = priv->cfg.gpio_dvbc;
+		break;
+	default:
+		ret = -EINVAL;
+		goto error;
+	}
 
 	/* update GPIOs only when needed */
 	if (!memcmp(gpio, priv->gpio, sizeof(priv->gpio)))
@@ -219,12 +217,10 @@ int cxd2820r_gpio(struct dvb_frontend *fe, u8 *gpio)
 		else
 			tmp1 |= (0 << (0 + i));
 
-		dev_dbg(&priv->i2c->dev, "%s: gpio i=%d %02x %02x\n", __func__,
-				i, tmp0, tmp1);
+		dbg("%s: GPIO i=%d %02x %02x", __func__, i, tmp0, tmp1);
 	}
 
-	dev_dbg(&priv->i2c->dev, "%s: wr gpio=%02x %02x\n", __func__, tmp0,
-			tmp1);
+	dbg("%s: wr gpio=%02x %02x", __func__, tmp0, tmp1);
 
 	/* write bits [7:2] */
 	ret = cxd2820r_wr_reg_mask(priv, 0x00089, tmp0, 0xfc);
@@ -240,8 +236,45 @@ int cxd2820r_gpio(struct dvb_frontend *fe, u8 *gpio)
 
 	return ret;
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return ret;
+}
+
+/* lock FE */
+static int cxd2820r_lock(struct cxd2820r_priv *priv, int active_fe)
+{
+	int ret = 0;
+	dbg("%s: active_fe=%d", __func__, active_fe);
+
+	mutex_lock(&priv->fe_lock);
+
+	/* -1=NONE, 0=DVB-T/T2, 1=DVB-C */
+	if (priv->active_fe == active_fe)
+		;
+	else if (priv->active_fe == -1)
+		priv->active_fe = active_fe;
+	else
+		ret = -EBUSY;
+
+	mutex_unlock(&priv->fe_lock);
+
+	return ret;
+}
+
+/* unlock FE */
+static void cxd2820r_unlock(struct cxd2820r_priv *priv, int active_fe)
+{
+	dbg("%s: active_fe=%d", __func__, active_fe);
+
+	mutex_lock(&priv->fe_lock);
+
+	/* -1=NONE, 0=DVB-T/T2, 1=DVB-C */
+	if (priv->active_fe == active_fe)
+		priv->active_fe = -1;
+
+	mutex_unlock(&priv->fe_lock);
+
+	return;
 }
 
 /* 64 bit div with round closest, like DIV_ROUND_CLOSEST but 64 bit */
@@ -250,56 +283,82 @@ u32 cxd2820r_div_u64_round_closest(u64 dividend, u32 divisor)
 	return div_u64(dividend + (divisor / 2), divisor);
 }
 
-static int cxd2820r_set_frontend(struct dvb_frontend *fe)
+static int cxd2820r_set_frontend(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
-	switch (c->delivery_system) {
+		switch (priv->delivery_system) {
+		case SYS_UNDEFINED:
+			if (c->delivery_system == SYS_DVBT) {
+				/* SLEEP => DVB-T */
+				ret = cxd2820r_set_frontend_t(fe, p);
+			} else {
+				/* SLEEP => DVB-T2 */
+				ret = cxd2820r_set_frontend_t2(fe, p);
+			}
+			break;
 	case SYS_DVBT:
-		ret = cxd2820r_init_t(fe);
-		if (ret < 0)
-			goto err;
-		ret = cxd2820r_set_frontend_t(fe);
-		if (ret < 0)
-			goto err;
+			if (c->delivery_system == SYS_DVBT) {
+				/* DVB-T => DVB-T */
+				ret = cxd2820r_set_frontend_t(fe, p);
+			} else if (c->delivery_system == SYS_DVBT2) {
+				/* DVB-T => DVB-T2 */
+				ret = cxd2820r_sleep_t(fe);
+				if (ret)
+					break;
+				ret = cxd2820r_set_frontend_t2(fe, p);
+			}
 		break;
 	case SYS_DVBT2:
-		ret = cxd2820r_init_t(fe);
-		if (ret < 0)
-			goto err;
-		ret = cxd2820r_set_frontend_t2(fe);
-		if (ret < 0)
-			goto err;
+			if (c->delivery_system == SYS_DVBT2) {
+				/* DVB-T2 => DVB-T2 */
+				ret = cxd2820r_set_frontend_t2(fe, p);
+			} else if (c->delivery_system == SYS_DVBT) {
+				/* DVB-T2 => DVB-T */
+				ret = cxd2820r_sleep_t2(fe);
+				if (ret)
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_init_c(fe);
-		if (ret < 0)
-			goto err;
-		ret = cxd2820r_set_frontend_c(fe);
-		if (ret < 0)
-			goto err;
+				ret = cxd2820r_set_frontend_t(fe, p);
+			}
 		break;
 	default:
-		dev_dbg(&priv->i2c->dev, "%s: error state=%d\n", __func__,
-				fe->dtv_property_cache.delivery_system);
+			dbg("%s: error state=%d", __func__,
+				priv->delivery_system);
 		ret = -EINVAL;
-		break;
 	}
-err:
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_set_frontend_c(fe, p);
+	}
+
 	return ret;
 }
+
 static int cxd2820r_read_status(struct dvb_frontend *fe, fe_status_t *status)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -308,41 +367,56 @@ static int cxd2820r_read_status(struct dvb_frontend *fe, fe_status_t *status)
 	case SYS_DVBT2:
 		ret = cxd2820r_read_status_t2(fe, status);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_read_status_c(fe, status);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_read_status_c(fe, status);
+	}
+
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
+
 	return ret;
 }
 
-static int cxd2820r_get_frontend(struct dvb_frontend *fe)
+static int cxd2820r_get_frontend(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
-
-	if (priv->delivery_system == SYS_UNDEFINED)
-		return 0;
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
-		ret = cxd2820r_get_frontend_t(fe);
+			ret = cxd2820r_get_frontend_t(fe, p);
 		break;
 	case SYS_DVBT2:
-		ret = cxd2820r_get_frontend_t2(fe);
-		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_get_frontend_c(fe);
+			ret = cxd2820r_get_frontend_t2(fe, p);
 		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_get_frontend_c(fe, p);
+	}
+
 	return ret;
 }
 
@@ -350,9 +424,13 @@ static int cxd2820r_read_ber(struct dvb_frontend *fe, u32 *ber)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -361,13 +439,18 @@ static int cxd2820r_read_ber(struct dvb_frontend *fe, u32 *ber)
 	case SYS_DVBT2:
 		ret = cxd2820r_read_ber_t2(fe, ber);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_read_ber_c(fe, ber);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_read_ber_c(fe, ber);
+	}
+
 	return ret;
 }
 
@@ -375,9 +458,13 @@ static int cxd2820r_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -386,13 +473,18 @@ static int cxd2820r_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
 	case SYS_DVBT2:
 		ret = cxd2820r_read_signal_strength_t2(fe, strength);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_read_signal_strength_c(fe, strength);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_read_signal_strength_c(fe, strength);
+	}
+
 	return ret;
 }
 
@@ -400,9 +492,13 @@ static int cxd2820r_read_snr(struct dvb_frontend *fe, u16 *snr)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -411,13 +507,18 @@ static int cxd2820r_read_snr(struct dvb_frontend *fe, u16 *snr)
 	case SYS_DVBT2:
 		ret = cxd2820r_read_snr_t2(fe, snr);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_read_snr_c(fe, snr);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_read_snr_c(fe, snr);
+	}
+
 	return ret;
 }
 
@@ -425,9 +526,13 @@ static int cxd2820r_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -436,28 +541,63 @@ static int cxd2820r_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 	case SYS_DVBT2:
 		ret = cxd2820r_read_ucblocks_t2(fe, ucblocks);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_read_ucblocks_c(fe, ucblocks);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_read_ucblocks_c(fe, ucblocks);
+	}
+
 	return ret;
 }
 
 static int cxd2820r_init(struct dvb_frontend *fe)
 {
-	return 0;
+	struct cxd2820r_priv *priv = fe->demodulator_priv;
+	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
+
+	priv->delivery_system = SYS_UNDEFINED;
+	/* delivery system is unknown at that (init) phase */
+
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_init_t(fe);
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_init_c(fe);
+	}
+
+	return ret;
 }
 
 static int cxd2820r_sleep(struct dvb_frontend *fe)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
+
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -466,13 +606,22 @@ static int cxd2820r_sleep(struct dvb_frontend *fe)
 	case SYS_DVBT2:
 		ret = cxd2820r_sleep_t2(fe);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_sleep_c(fe);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+
+		cxd2820r_unlock(priv, 0);
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_sleep_c(fe);
+
+		cxd2820r_unlock(priv, 1);
+	}
+
 	return ret;
 }
 
@@ -481,9 +630,13 @@ static int cxd2820r_get_tune_settings(struct dvb_frontend *fe,
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	if (fe->ops.info.type == FE_OFDM) {
+		/* DVB-T/T2 */
+		ret = cxd2820r_lock(priv, 0);
+		if (ret)
+			return ret;
 
 	switch (fe->dtv_property_cache.delivery_system) {
 	case SYS_DVBT:
@@ -492,45 +645,40 @@ static int cxd2820r_get_tune_settings(struct dvb_frontend *fe,
 	case SYS_DVBT2:
 		ret = cxd2820r_get_tune_settings_t2(fe, s);
 		break;
-	case SYS_DVBC_ANNEX_A:
-		ret = cxd2820r_get_tune_settings_c(fe, s);
-		break;
 	default:
 		ret = -EINVAL;
-		break;
 	}
+	} else {
+		/* DVB-C */
+		ret = cxd2820r_lock(priv, 1);
+		if (ret)
+			return ret;
+
+		ret = cxd2820r_get_tune_settings_c(fe, s);
+	}
+
 	return ret;
 }
 
-static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
+static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe,
+	struct dvb_frontend_parameters *p)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret, i;
 	fe_status_t status = 0;
-
-	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
-			fe->dtv_property_cache.delivery_system);
+	dbg("%s: delsys=%d", __func__, fe->dtv_property_cache.delivery_system);
 
 	/* switch between DVB-T and DVB-T2 when tune fails */
 	if (priv->last_tune_failed) {
-		if (priv->delivery_system == SYS_DVBT) {
-			ret = cxd2820r_sleep_t(fe);
-			if (ret)
-				goto error;
-
+		if (priv->delivery_system == SYS_DVBT)
 			c->delivery_system = SYS_DVBT2;
-		} else if (priv->delivery_system == SYS_DVBT2) {
-			ret = cxd2820r_sleep_t2(fe);
-			if (ret)
-				goto error;
-
+		else
 			c->delivery_system = SYS_DVBT;
 		}
-	}
 
 	/* set frontend */
-	ret = cxd2820r_set_frontend(fe);
+	ret = cxd2820r_set_frontend(fe, p);
 	if (ret)
 		goto error;
 
@@ -538,7 +686,6 @@ static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
 	/* frontend lock wait loop count */
 	switch (priv->delivery_system) {
 	case SYS_DVBT:
-	case SYS_DVBC_ANNEX_A:
 		i = 20;
 		break;
 	case SYS_DVBT2:
@@ -552,18 +699,18 @@ static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
 
 	/* wait frontend lock */
 	for (; i > 0; i--) {
-		dev_dbg(&priv->i2c->dev, "%s: loop=%d\n", __func__, i);
+		dbg("%s: LOOP=%d", __func__, i);
 		msleep(50);
 		ret = cxd2820r_read_status(fe, &status);
 		if (ret)
 			goto error;
 
-		if (status & FE_HAS_LOCK)
+		if (status & FE_HAS_SIGNAL)
 			break;
 	}
 
 	/* check if we have a valid signal */
-	if (status & FE_HAS_LOCK) {
+	if (status) {
 		priv->last_tune_failed = 0;
 		return DVBFE_ALGO_SEARCH_SUCCESS;
 	} else {
@@ -572,7 +719,7 @@ static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
 	}
 
 error:
-	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	dbg("%s: failed:%d", __func__, ret);
 	return DVBFE_ALGO_SEARCH_ERROR;
 }
 
@@ -584,101 +731,172 @@ static int cxd2820r_get_frontend_algo(struct dvb_frontend *fe)
 static void cxd2820r_release(struct dvb_frontend *fe)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
-	int uninitialized_var(ret); /* silence compiler warning */
+	dbg("%s", __func__);
 
-	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
 
-#ifdef CONFIG_GPIOLIB
-	/* remove GPIOs */
-	if (priv->gpio_chip.label) {
-		ret = gpiochip_remove(&priv->gpio_chip);
-		if (ret)
-			dev_err(&priv->i2c->dev, "%s: gpiochip_remove() " \
-					"failed=%d\n", KBUILD_MODNAME, ret);
-	}
-#endif
+	if (fe->ops.info.type == FE_OFDM) {
+		i2c_del_adapter(&priv->tuner_i2c_adapter);
 	kfree(priv);
+	}
+
 	return;
 }
 
 static int cxd2820r_i2c_gate_ctrl(struct dvb_frontend *fe, int enable)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
-
-	dev_dbg(&priv->i2c->dev, "%s: %d\n", __func__, enable);
+	dbg("%s: %d", __func__, enable);
 
 	/* Bit 0 of reg 0xdb in bank 0x00 controls I2C repeater */
 	return cxd2820r_wr_reg_mask(priv, 0xdb, enable ? 1 : 0, 0x1);
 }
 
-#ifdef CONFIG_GPIOLIB
-static int cxd2820r_gpio_direction_output(struct gpio_chip *chip, unsigned nr,
-		int val)
+static u32 cxd2820r_tuner_i2c_func(struct i2c_adapter *adapter)
 {
-	struct cxd2820r_priv *priv =
-			container_of(chip, struct cxd2820r_priv, gpio_chip);
-	u8 gpio[GPIO_COUNT];
-
-	dev_dbg(&priv->i2c->dev, "%s: nr=%d val=%d\n", __func__, nr, val);
-
-	memcpy(gpio, priv->gpio, sizeof(gpio));
-	gpio[nr] = CXD2820R_GPIO_E | CXD2820R_GPIO_O | (val << 2);
-
-	return cxd2820r_gpio(&priv->fe, gpio);
+	return I2C_FUNC_I2C;
 }
 
-static void cxd2820r_gpio_set(struct gpio_chip *chip, unsigned nr, int val)
+static int cxd2820r_tuner_i2c_xfer(struct i2c_adapter *i2c_adap,
+	struct i2c_msg msg[], int num)
 {
-	struct cxd2820r_priv *priv =
-			container_of(chip, struct cxd2820r_priv, gpio_chip);
-	u8 gpio[GPIO_COUNT];
+	struct cxd2820r_priv *priv = i2c_get_adapdata(i2c_adap);
+	int ret;
+	u8 *obuf = kmalloc(msg[0].len + 2, GFP_KERNEL);
+	struct i2c_msg msg2[2] = {
+		{
+			.addr = priv->cfg.i2c_address,
+			.flags = 0,
+			.len = msg[0].len + 2,
+			.buf = obuf,
+		}, {
+			.addr = priv->cfg.i2c_address,
+			.flags = I2C_M_RD,
+			.len = msg[1].len,
+			.buf = msg[1].buf,
+		}
+	};
 
-	dev_dbg(&priv->i2c->dev, "%s: nr=%d val=%d\n", __func__, nr, val);
+	if (!obuf)
+		return -ENOMEM;
 
-	memcpy(gpio, priv->gpio, sizeof(gpio));
-	gpio[nr] = CXD2820R_GPIO_E | CXD2820R_GPIO_O | (val << 2);
+	obuf[0] = 0x09;
+	obuf[1] = (msg[0].addr << 1);
+	if (num == 2) { /* I2C read */
+		obuf[1] = (msg[0].addr << 1) | I2C_M_RD; /* I2C RD flag */
+		msg2[0].len = msg[0].len + 2 - 1; /* '-1' maybe HW bug ? */
+	}
+	memcpy(&obuf[2], msg[0].buf, msg[0].len);
 
-	(void) cxd2820r_gpio(&priv->fe, gpio);
+	ret = i2c_transfer(priv->i2c, msg2, num);
+	if (ret < 0)
+		warn("tuner i2c failed ret:%d", ret);
 
-	return;
+	kfree(obuf);
+
+	return ret;
 }
 
-static int cxd2820r_gpio_get(struct gpio_chip *chip, unsigned nr)
+static struct i2c_algorithm cxd2820r_tuner_i2c_algo = {
+	.master_xfer   = cxd2820r_tuner_i2c_xfer,
+	.functionality = cxd2820r_tuner_i2c_func,
+};
+
+struct i2c_adapter *cxd2820r_get_tuner_i2c_adapter(struct dvb_frontend *fe)
 {
-	struct cxd2820r_priv *priv =
-			container_of(chip, struct cxd2820r_priv, gpio_chip);
-
-	dev_dbg(&priv->i2c->dev, "%s: nr=%d\n", __func__, nr);
-
-	return (priv->gpio[nr] >> 2) & 0x01;
+	struct cxd2820r_priv *priv = fe->demodulator_priv;
+	return &priv->tuner_i2c_adapter;
 }
-#endif
+EXPORT_SYMBOL(cxd2820r_get_tuner_i2c_adapter);
 
-static const struct dvb_frontend_ops cxd2820r_ops = {
-	.delsys = { SYS_DVBT, SYS_DVBT2, SYS_DVBC_ANNEX_A },
-	/* default: DVB-T/T2 */
+static struct dvb_frontend_ops cxd2820r_ops[2];
+
+struct dvb_frontend *cxd2820r_attach(const struct cxd2820r_config *cfg,
+	struct i2c_adapter *i2c, struct dvb_frontend *fe)
+{
+	int ret;
+	struct cxd2820r_priv *priv = NULL;
+	u8 tmp;
+
+	if (fe == NULL) {
+		/* FE0 */
+		/* allocate memory for the internal priv */
+		priv = kzalloc(sizeof(struct cxd2820r_priv), GFP_KERNEL);
+		if (priv == NULL)
+			goto error;
+
+		/* setup the priv */
+		priv->i2c = i2c;
+		memcpy(&priv->cfg, cfg, sizeof(struct cxd2820r_config));
+		mutex_init(&priv->fe_lock);
+
+		priv->active_fe = -1; /* NONE */
+
+		/* check if the demod is there */
+		priv->bank[0] = priv->bank[1] = 0xff;
+		ret = cxd2820r_rd_reg(priv, 0x000fd, &tmp);
+		dbg("%s: chip id=%02x", __func__, tmp);
+		if (ret || tmp != 0xe1)
+			goto error;
+
+		/* create frontends */
+		memcpy(&priv->fe[0].ops, &cxd2820r_ops[0],
+			sizeof(struct dvb_frontend_ops));
+		memcpy(&priv->fe[1].ops, &cxd2820r_ops[1],
+			sizeof(struct dvb_frontend_ops));
+
+		priv->fe[0].demodulator_priv = priv;
+		priv->fe[1].demodulator_priv = priv;
+
+		/* create tuner i2c adapter */
+		strlcpy(priv->tuner_i2c_adapter.name,
+			"CXD2820R tuner I2C adapter",
+			sizeof(priv->tuner_i2c_adapter.name));
+		priv->tuner_i2c_adapter.algo = &cxd2820r_tuner_i2c_algo;
+		priv->tuner_i2c_adapter.algo_data = NULL;
+		i2c_set_adapdata(&priv->tuner_i2c_adapter, priv);
+		if (i2c_add_adapter(&priv->tuner_i2c_adapter) < 0) {
+			err("tuner I2C bus could not be initialized");
+			goto error;
+		}
+
+		return &priv->fe[0];
+
+	} else {
+		/* FE1: FE0 given as pointer, just return FE1 we have
+		 * already created */
+		priv = fe->demodulator_priv;
+		return &priv->fe[1];
+	}
+
+error:
+	kfree(priv);
+	return NULL;
+}
+EXPORT_SYMBOL(cxd2820r_attach);
+
+static struct dvb_frontend_ops cxd2820r_ops[2] = {
+	{
+		/* DVB-T/T2 */
 	.info = {
-		.name = "Sony CXD2820R",
-
-		.caps =	FE_CAN_FEC_1_2			|
-			FE_CAN_FEC_2_3			|
-			FE_CAN_FEC_3_4			|
-			FE_CAN_FEC_5_6			|
-			FE_CAN_FEC_7_8			|
-			FE_CAN_FEC_AUTO			|
-			FE_CAN_QPSK			|
-			FE_CAN_QAM_16			|
-			FE_CAN_QAM_32			|
-			FE_CAN_QAM_64			|
-			FE_CAN_QAM_128			|
-			FE_CAN_QAM_256			|
+			.name = "Sony CXD2820R (DVB-T/T2)",
+			.type = FE_OFDM,
+			.frequency_min  =  48000000,
+			.frequency_max  = 864000000,
+			.frequency_stepsize = 1000,
+			.caps =
+				FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 |
+				FE_CAN_FEC_3_4 | FE_CAN_FEC_5_6 |
+				FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |
+				FE_CAN_QPSK | FE_CAN_QAM_16 |
+				FE_CAN_QAM_64 | FE_CAN_QAM_256 |
 			FE_CAN_QAM_AUTO			|
 			FE_CAN_TRANSMISSION_MODE_AUTO	|
 			FE_CAN_GUARD_INTERVAL_AUTO	|
 			FE_CAN_HIERARCHY_AUTO		|
 			FE_CAN_MUTE_TS			|
-			FE_CAN_2G_MODULATION		|
-			FE_CAN_MULTISTREAM
+				FE_CAN_2G_MODULATION | FE_CAN_MULTISTREAM
 		},
 
 	.release		= cxd2820r_release,
@@ -698,78 +916,39 @@ static const struct dvb_frontend_ops cxd2820r_ops = {
 	.read_ber		= cxd2820r_read_ber,
 	.read_ucblocks		= cxd2820r_read_ucblocks,
 	.read_signal_strength	= cxd2820r_read_signal_strength,
+	},
+	{
+		/* DVB-C */
+		.info = {
+			.name = "Sony CXD2820R (DVB-C)",
+			.type = FE_QAM,
+			.frequency_min  =  48000000,
+			.frequency_max  = 864000000,
+			.frequency_stepsize = 1000,
+			.caps =
+				FE_CAN_QAM_16 | FE_CAN_QAM_32 | FE_CAN_QAM_64 |
+				FE_CAN_QAM_128 | FE_CAN_QAM_256 |
+				FE_CAN_FEC_AUTO
+		},
+
+		.release = cxd2820r_release,
+		.init = cxd2820r_init,
+		.sleep = cxd2820r_sleep,
+
+		.get_tune_settings = cxd2820r_get_tune_settings,
+		.i2c_gate_ctrl = cxd2820r_i2c_gate_ctrl,
+
+		.set_frontend = cxd2820r_set_frontend,
+		.get_frontend = cxd2820r_get_frontend,
+
+		.read_status = cxd2820r_read_status,
+		.read_snr = cxd2820r_read_snr,
+		.read_ber = cxd2820r_read_ber,
+		.read_ucblocks = cxd2820r_read_ucblocks,
+		.read_signal_strength = cxd2820r_read_signal_strength,
+	},
 };
 
-struct dvb_frontend *cxd2820r_attach(const struct cxd2820r_config *cfg,
-		struct i2c_adapter *i2c, int *gpio_chip_base
-)
-{
-	struct cxd2820r_priv *priv;
-	int ret;
-	u8 tmp;
-
-	priv = kzalloc(sizeof(struct cxd2820r_priv), GFP_KERNEL);
-	if (!priv) {
-		ret = -ENOMEM;
-		dev_err(&i2c->dev, "%s: kzalloc() failed\n",
-				KBUILD_MODNAME);
-		goto error;
-	}
-
-	priv->i2c = i2c;
-	memcpy(&priv->cfg, cfg, sizeof(struct cxd2820r_config));
-	memcpy(&priv->fe.ops, &cxd2820r_ops, sizeof(struct dvb_frontend_ops));
-	priv->fe.demodulator_priv = priv;
-
-	priv->bank[0] = priv->bank[1] = 0xff;
-	ret = cxd2820r_rd_reg(priv, 0x000fd, &tmp);
-	dev_dbg(&priv->i2c->dev, "%s: chip id=%02x\n", __func__, tmp);
-	if (ret || tmp != 0xe1)
-		goto error;
-
-	if (gpio_chip_base) {
-#ifdef CONFIG_GPIOLIB
-		/* add GPIOs */
-		priv->gpio_chip.label = KBUILD_MODNAME;
-		priv->gpio_chip.dev = &priv->i2c->dev;
-		priv->gpio_chip.owner = THIS_MODULE;
-		priv->gpio_chip.direction_output =
-				cxd2820r_gpio_direction_output;
-		priv->gpio_chip.set = cxd2820r_gpio_set;
-		priv->gpio_chip.get = cxd2820r_gpio_get;
-		priv->gpio_chip.base = -1; /* dynamic allocation */
-		priv->gpio_chip.ngpio = GPIO_COUNT;
-		priv->gpio_chip.can_sleep = 1;
-		ret = gpiochip_add(&priv->gpio_chip);
-		if (ret)
-			goto error;
-
-		dev_dbg(&priv->i2c->dev, "%s: gpio_chip.base=%d\n", __func__,
-				priv->gpio_chip.base);
-
-		*gpio_chip_base = priv->gpio_chip.base;
-#else
-		/*
-		 * Use static GPIO configuration if GPIOLIB is undefined.
-		 * This is fallback condition.
-		 */
-		u8 gpio[GPIO_COUNT];
-		gpio[0] = (*gpio_chip_base >> 0) & 0x07;
-		gpio[1] = (*gpio_chip_base >> 3) & 0x07;
-		gpio[2] = 0;
-		ret = cxd2820r_gpio(&priv->fe, gpio);
-		if (ret)
-			goto error;
-#endif
-	}
-
-	return &priv->fe;
-error:
-	dev_dbg(&i2c->dev, "%s: failed=%d\n", __func__, ret);
-	kfree(priv);
-	return NULL;
-}
-EXPORT_SYMBOL(cxd2820r_attach);
 
 MODULE_AUTHOR("Antti Palosaari <crope@iki.fi>");
 MODULE_DESCRIPTION("Sony CXD2820R demodulator driver");

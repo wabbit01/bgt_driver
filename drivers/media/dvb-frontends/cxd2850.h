@@ -35,11 +35,11 @@ struct cxd2850_config {
 	bool	tone_out;
 };
 
-//#if defined(CONFIG_DVB_CXD2850) || (defined(CONFIG_DVB_CXD2850_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_DVB_CXD2850)
 
 extern struct dvb_frontend *cxd2850_attach(const struct cxd2850_config *config,
 					   struct i2c_adapter *i2c);
-/*#else
+#else
 
 static inline struct dvb_frontend *cxd2850_attach(const struct cxd2850_config *config,
 						  struct i2c_adapter *i2c)
@@ -47,6 +47,6 @@ static inline struct dvb_frontend *cxd2850_attach(const struct cxd2850_config *c
 	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
 }
-#endif *//* CONFIG_DVB_CXD2850 */
+#endif /* CONFIG_DVB_CXD2850 */
 
 #endif /* __CXD2850_H */

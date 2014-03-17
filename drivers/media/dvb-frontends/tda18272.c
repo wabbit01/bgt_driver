@@ -1423,7 +1423,8 @@ static int tda18272_get_state(struct dvb_frontend *fe, enum tuner_param param, s
 	return ret;
 }
 
-static int tda18272_set_params(struct dvb_frontend *fe)
+static int tda18272_set_params(struct dvb_frontend *fe,
+		      struct dvb_frontend_parameters *params)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct tda18272_state *tda18272 = fe->tuner_priv;
@@ -1520,7 +1521,7 @@ static struct dvb_tuner_ops tda18272_ops = {
 	.set_params		= tda18272_set_params,
 	.set_state		= tda18272_set_state,
 	.get_state		= tda18272_get_state,
-	.get_if_frequency	= tda18272_get_ifreq,
+	.get_frequency		= tda18272_get_ifreq,
 	.release		= tda18272_release
 };
 
